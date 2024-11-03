@@ -11733,42 +11733,69 @@ async def user_stats(client, message: Message):
 
 
 
+
+
 import os
 import logging
-import asyncio
-from pyrogram import Client, idle, filters
+from pyrogram import Client, filters
 from pyrogram.types import Message
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 
 import config
-from config import BANNED_USERS
-from ANNIEMUSIC import HELPABLE, LOGGER, app, userbot
-from ANNIEMUSIC.core.call import ANNIE
-from ANNIEMUSIC.plugins import ALL_MODULES
-from ANNIEMUSIC.utils.database import get_banned_users, get_gbanned
+from ANNIEMUSIC import app
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-OWNER_ID = 7297381612  # Your owner ID
+OWNER_ID = 7297381612  # Owner's ID to restrict access
+
+# Database setup
+MONGO_DB_URI = os.getenv("MONGO_DB_URI")  # Ensure DATABASE_URL is set in environment variables
+engine = create_engine(MONGO_DB_URI)
+Session = sessionmaker(bind=engine)
+session = Session()
+Base = declarative_base()
+
+class DeployedBot(Base):
+    __tablename__ = 'deployed_bots'
+    id = Column(Integer, primary_key=True)
+    username = Column(String, unique=True, nullable=False)
+
+# Create table if it doesn't exist
+Base.metadata.create_all(engine)
 
 @app.on_message(filters.command("bot") & filters.user(OWNER_ID))
 async def send_bot_usernames(client: Client, message: Message):
     try:
-        bot_username = await fetch_deployed_bot_username()
-        if bot_username:
-            await message.reply_text(bot_username)
+        bot_usernames = fetch_all_deployed_bot_usernames()
+        if bot_usernames:
+            await message.reply_text("\n".join(bot_usernames))
         else:
-            await message.reply_text("No bot found.")
+            await message.reply_text("No bots found.")
     except Exception as e:
         logger.error(f"Error in /bot command: {e}")
-        await message.reply_text("An error occurred while fetching the bot username.")
+        await message.reply_text("An error occurred while fetching bot usernames.")
 
-async def fetch_deployed_bot_username():
-    # Get the bot username from the config
-    return config.BOT_USERNAME  # Ensure you have BOT_USERNAME in your config.py
+def fetch_all_deployed_bot_usernames():
+    """Fetch all bot usernames stored in the deployed_bots table."""
+    usernames = session.query(DeployedBot.username).all()
+    return [username[0] for username in usernames]
+
+async def fetch_and_store_deployed_bot_username():
+    """Fetch the bot username from config and store it in the database if not present."""
+    bot_username = config.BOT_USERNAME  # Ensure BOT_USERNAME is defined in config.py
+    if bot_username:
+        # Store username only if it's not already in the database
+        if not session.query(DeployedBot).filter_by(username=bot_username).first():
+            new_bot = DeployedBot(username=bot_username)
+            session.add(new_bot)
+            session.commit()
 
 if __name__ == "__main__":
+    asyncio.run(fetch_and_store_deployed_bot_username())
     app.run()
 
 
